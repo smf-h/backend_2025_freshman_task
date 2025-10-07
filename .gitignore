@@ -1,0 +1,25 @@
+# Binaries
+/dist/
+/bin/
+*.exe
+*.out
+
+# Go build
+*.test
+coverage.*
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Local config & secrets
+config/config.yaml
+.env
+
+# Swagger generated
+/docs/swagger/*
+!docs/swagger/.keep
+
+# Logs
+*.log

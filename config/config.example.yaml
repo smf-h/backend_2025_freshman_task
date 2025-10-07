@@ -1,0 +1,42 @@
+# 示例配置文件。提交 PR 时请使用本文件，真实敏感信息放在本地 config.yaml（已被 .gitignore 忽略）。
+server:
+  port: 8080
+  mode: release
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: CHANGE_ME
+  database: ai_chat
+  charset: utf8mb4
+chat:
+  default_model: doubao-seed-1-6-250615
+  max_history: 12
+  memory_limit_msgs: 200
+  request_timeout: 15s
+auth:
+  jwt_secret: CHANGE_ME_JWT_SECRET
+  access_ttl: 24h
+models:
+  - id: doubao-seed-1-6-250615
+    min_level: 1
+  - id: deepseek-v3-1-terminus
+    min_level: 3
+  - id: kimi-k2-250905
+    min_level: 5
+redis:
+  host: 127.0.0.1
+  port: 6379
+  password: ""   # 本地无密码
+  db: 0
+  pool_size: 20
+  dial_timeout: 2s
+  read_timeout: 1s
+  write_timeout: 1s
+
+# 使用环境变量覆盖敏感值 (示例)：
+#   setx MYSQL_PASSWORD "real_password"
+#   setx AUTH_JWT_SECRET "real_jwt_secret"
+#   setx REDIS_PASSWORD "redis_pwd"
+# 或 PowerShell 当前会话：
+#   $env:MYSQL_PASSWORD="real_password"
