@@ -1,0 +1,35 @@
+server:
+  port: 8080
+  mode: debug
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: 2823128231
+  database: ai_chat
+  charset: utf8mb4
+chat:
+  default_model: doubao-seed-1-6-250615
+  max_history: 12
+  memory_limit_msgs: 200
+  request_timeout: 15s
+auth:
+  jwt_secret: change_me_dev_secret
+  access_ttl: 24h
+models:
+  - id: doubao-seed-1-6-250615
+    min_level: 1
+  - id: deepseek-v3-1-terminus
+    min_level: 3
+  - id: kimi-k2-250905
+    min_level: 5
+
+redis:
+  host: 127.0.0.1
+  port: 6379
+  # password: 2823128231
+  db: 0
+  pool_size: 20
+  dial_timeout: 2s
+  read_timeout: 1s
+  write_timeout: 1s

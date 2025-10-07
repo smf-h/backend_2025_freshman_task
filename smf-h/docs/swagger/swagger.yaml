@@ -1,0 +1,384 @@
+basePath: /
+definitions:
+  main.AuthData:
+    properties:
+      token:
+        example: eyJhbGciOiJIUzI1NiIs...
+        type: string
+      user_id:
+        example: 1
+        type: integer
+    type: object
+  main.AuthResponse:
+    properties:
+      code:
+        example: 0
+        type: integer
+      data:
+        $ref: '#/definitions/main.AuthData'
+      msg:
+        example: ok
+        type: string
+    type: object
+  main.BadRequestError:
+    properties:
+      code:
+        example: 40001
+        type: integer
+      msg:
+        example: '参数错误: question 必填'
+        type: string
+    type: object
+  main.ChatClearData:
+    properties:
+      conversation_id:
+        type: string
+    type: object
+  main.ChatClearResponse:
+    properties:
+      code:
+        example: 0
+        type: integer
+      data:
+        $ref: '#/definitions/main.ChatClearData'
+      msg:
+        example: ok
+        type: string
+    type: object
+  main.ChatHistoryData:
+    properties:
+      conversation_id:
+        type: string
+      count:
+        example: 4
+        type: integer
+      messages:
+        items:
+          $ref: '#/definitions/memory.Message'
+        type: array
+    type: object
+  main.ChatHistoryResponse:
+    properties:
+      code:
+        example: 0
+        type: integer
+      data:
+        $ref: '#/definitions/main.ChatHistoryData'
+      msg:
+        example: ok
+        type: string
+    type: object
+  main.ChatRequest:
+    properties:
+      conversation_id:
+        example: ""
+        type: string
+      model:
+        example: doubao-seed-1-6-250615
+        type: string
+      question:
+        example: 你好
+        type: string
+    type: object
+  main.ChatSendData:
+    properties:
+      answer:
+        example: 你好，我是AI助手
+        type: string
+      conversation_id:
+        example: c3a2f1c4-uuid
+        type: string
+      used_history:
+        example: 2
+        type: integer
+    type: object
+  main.ChatSendResponse:
+    properties:
+      code:
+        example: 0
+        type: integer
+      data:
+        $ref: '#/definitions/main.ChatSendData'
+      msg:
+        example: ok
+        type: string
+    type: object
+  main.ForbiddenConversationError:
+    properties:
+      code:
+        example: 40302
+        type: integer
+      msg:
+        example: 会话不属于当前用户
+        type: string
+    type: object
+  main.ForbiddenModelError:
+    properties:
+      code:
+        example: 40301
+        type: integer
+      msg:
+        example: 无权限使用模型(doubao-seed-1-6-250615)，需要等级≥3
+        type: string
+    type: object
+  main.InternalEmptyReturnError:
+    properties:
+      code:
+        example: 50001
+        type: integer
+      msg:
+        example: 模型返回为空
+        type: string
+    type: object
+  main.InternalModelCallError:
+    properties:
+      code:
+        example: 50000
+        type: integer
+      msg:
+        example: 模型调用失败
+        type: string
+    type: object
+  main.ModelNotFoundError:
+    properties:
+      code:
+        example: 40002
+        type: integer
+      msg:
+        example: 模型不存在或未配置
+        type: string
+    type: object
+  main.UnauthorizedError:
+    properties:
+      code:
+        example: 40101
+        type: integer
+      msg:
+        example: 未提供或非法的 Authorization 头
+        type: string
+    type: object
+  main.loginReq:
+    properties:
+      email:
+        example: user1@test.com
+        type: string
+      password:
+        example: Abcd1234!
+        type: string
+      username:
+        example: user1
+        type: string
+    required:
+    - password
+    type: object
+  main.registerReq:
+    properties:
+      email:
+        example: user1@test.com
+        type: string
+      password:
+        example: Abcd1234!
+        type: string
+      username:
+        example: user1
+        type: string
+    required:
+    - password
+    - username
+    type: object
+  memory.Message:
+    properties:
+      content:
+        type: string
+      role:
+        type: string
+      token_count:
+        type: integer
+    type: object
+info:
+  contact: {}
+  description: 简化版 AI 问答系统接口，包含认证/聊天/会话与模型权限示例。
+  title: AI Chat API
+  version: "0.4"
+paths:
+  /api/auth/login:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 登录参数 (username 或 email 任选其一)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.loginReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.AuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/main.BadRequestError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/main.InternalModelCallError'
+      summary: 用户登录
+      tags:
+      - Auth
+  /api/auth/register:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 注册参数
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.registerReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.AuthResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/main.BadRequestError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/main.InternalModelCallError'
+      summary: 用户注册
+      tags:
+      - Auth
+  /api/chat/clear:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 会话ID
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties:
+            type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.ChatClearResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/main.BadRequestError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/main.UnauthorizedError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/main.ForbiddenConversationError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/main.InternalModelCallError'
+      security:
+      - BearerAuth: []
+      summary: 清空会话
+      tags:
+      - Chat
+  /api/chat/history:
+    get:
+      parameters:
+      - description: 会话ID
+        in: query
+        name: conversation_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.ChatHistoryResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/main.BadRequestError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/main.UnauthorizedError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/main.ForbiddenConversationError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/main.InternalModelCallError'
+      security:
+      - BearerAuth: []
+      summary: 获取历史
+      tags:
+      - Chat
+  /api/chat/send:
+    post:
+      consumes:
+      - application/json
+      description: 发送用户问题并返回模型回答，支持新建或继续会话
+      parameters:
+      - description: 请求体
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/main.ChatRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 成功
+          schema:
+            $ref: '#/definitions/main.ChatSendResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/main.ModelNotFoundError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/main.UnauthorizedError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/main.ForbiddenConversationError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/main.InternalEmptyReturnError'
+      security:
+      - BearerAuth: []
+      summary: 发送消息
+      tags:
+      - Chat
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
