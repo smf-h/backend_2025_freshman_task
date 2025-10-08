@@ -9,6 +9,7 @@ package main
 // @name Authorization
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -308,6 +309,9 @@ func handleChatSend(c *gin.Context) {
 		}
 	}
 
+	// 内存预热：如果该会话内存为空，尝试先用 Redis 最近窗口填充，失败再回源 DB
+	warmConversationMemory(c.Request.Context(), req.ConversationID)
+
 	// 模型存在性校验：未在策略表里直接判定为不存在
 	if _, ok := modelLevelMap[req.Model]; !ok {
 		writeErr(c, http.StatusBadRequest, CodeModelNotFound, "模型不存在或未配置")
@@ -371,6 +375,34 @@ func handleChatSend(c *gin.Context) {
 		Answer:         answer,
 		UsedHistory:    len(history),
 	}})
+}
+
+// warmConversationMemory 如果指定会话在内存中为空，则尝试：Redis -> DB 回填最近历史，避免服务重启后第一轮 /send 丢上下文。
+func warmConversationMemory(ctx context.Context, conversationID string) {
+	if conversationID == "" {
+		return
+	}
+	cm := mgr.Get(conversationID)
+	if len(cm.GetAll()) > 0 { // 已有内存
+		return
+	}
+	// 1. Redis 最近历史
+	if cached, err := redisstore.GetRecentMessages(ctx, conversationID); err == nil && cached != "" {
+		var recent []memory.Message
+		if jsonErr := json.Unmarshal([]byte(cached), &recent); jsonErr == nil {
+			for _, m := range recent {
+				cm.Append(m)
+			}
+			return
+		}
+	}
+	// 2. 数据库全量（或可限制最大读取条数：这里简单读取全部，然后内存自身会保留最近 maxMsgs 条）
+	var dbMsgs []models.Message
+	if err := db.Global.Where("conversation_id = ?", conversationID).Order("id asc").Find(&dbMsgs).Error; err == nil {
+		for _, m := range dbMsgs {
+			cm.Append(memory.Message{Role: m.Role, Content: m.Content, TokenCount: m.TokenCount})
+		}
+	}
 }
 
 // 获取历史
