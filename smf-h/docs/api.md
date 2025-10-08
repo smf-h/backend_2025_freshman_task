@@ -105,20 +105,14 @@ POST /api/chat/clear (需登录)
   "full": false   // 可选，true=连同会话元数据彻底删除
 }
 ```
-响应示例：
+响应示例（已精简，仅返回会话 ID）：
 ```
 {
   "code":0,
-  "data": {
-    "conversation_id":"xxx",
-    "deleted": false,   // full=true 且会话记录删除后为 true
-    "full": false,
-    "message_deleted": 4,  // 本次实际删除的消息条数
-    "conversation_deleted": 1 // full=true 且会话记录删除后=1，否则缺省或=0
-  }
+  "data": { "conversation_id":"xxx" }
 }
 ```
-行为说明：
+行为说明（响应不再返回 full / deleted 等详情，只做动作）：
 | full | 动作 |
 |------|------|
 | false | 删除该会话全部消息，保留 conversations 记录 (可继续追加历史) |

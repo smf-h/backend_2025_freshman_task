@@ -99,13 +99,9 @@ type ChatHistoryResponse struct {
 	Data ChatHistoryData `json:"data"`
 }
 
-type ChatClearData struct {
-	ConversationID string `json:"conversation_id"`
-	Deleted        bool   `json:"deleted"`
-	Full           bool   `json:"full"`
-	MessageDeleted int64  `json:"message_deleted" example:"4"` // 实际删除的消息条数
-	ConversationDeleted int64 `json:"conversation_deleted,omitempty" example:"1"` // full 模式删除的会话条数 (0 或 1)
-}
+	type ChatClearData struct {
+		ConversationID string `json:"conversation_id"`
+	}
 type ChatClearResponse struct {
 	Code int           `json:"code" example:"0"`
 	Msg  string        `json:"msg" example:"ok"`
@@ -531,20 +527,13 @@ func handleChatClear(c *gin.Context) {
 			return
 		}
 	}
-	// 删除数据库消息并统计条数
-	var delResult = db.Global.Where("conversation_id = ?", r.ConversationID).Delete(&models.Message{})
-	if delResult.Error != nil {
+		// 删除数据库消息
+		if err := db.Global.Where("conversation_id = ?", r.ConversationID).Delete(&models.Message{}).Error; err != nil {
 		writeErr(c, http.StatusInternalServerError, CodeInternalError, "清空失败")
 		return
 	}
-	deletedConv := false
-	var convDelRows int64
-	if r.Full { // 连同会话元数据删除
-		res := db.Global.Delete(&models.Conversation{}, "id = ?", r.ConversationID)
-		if res.Error == nil && res.RowsAffected > 0 {
-			deletedConv = true
-			convDelRows = res.RowsAffected
-		}
+		if r.Full { // 连同会话元数据删除
+			_ = db.Global.Delete(&models.Conversation{}, "id = ?", r.ConversationID).Error
 	}
 	// 清内存
 	mgr.Get(r.ConversationID).Clear()
@@ -554,9 +543,9 @@ func handleChatClear(c *gin.Context) {
 	// 删除 Redis 缓存（recent + summary）
 	redisstore.DeleteConversationAll(c.Request.Context(), r.ConversationID)
 	if os.Getenv("DEBUG_CACHE") == "1" {
-		fmt.Printf("[DEBUG_CACHE] delete cache conv=%s full=%v msg_deleted=%d redis_available=%v\n", r.ConversationID, r.Full, delResult.RowsAffected, redisstore.IsAvailable())
+			fmt.Printf("[DEBUG_CACHE] delete cache conv=%s full=%v redis_available=%v\n", r.ConversationID, r.Full, redisstore.IsAvailable())
 	}
-	c.JSON(http.StatusOK, ChatClearResponse{Code: 0, Msg: "ok", Data: ChatClearData{ConversationID: r.ConversationID, Deleted: deletedConv, Full: r.Full, MessageDeleted: delResult.RowsAffected, ConversationDeleted: convDelRows}})
+		c.JSON(http.StatusOK, ChatClearResponse{Code: 0, Msg: "ok", Data: ChatClearData{ConversationID: r.ConversationID}})
 }
 
 // 调试查看缓存（只在 DEBUG_CACHE=1 时启用）
