@@ -252,6 +252,7 @@ func main() {
 		chatGroup.POST("/send", handleChatSend)
 		chatGroup.GET("/history", handleChatHistory)
 		chatGroup.POST("/clear", handleChatClear)
+		chatGroup.GET("/list", handleChatList)
 	}
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
@@ -528,6 +529,33 @@ func handleChatClear(c *gin.Context) {
 	// 清内存
 	mgr.Get(r.ConversationID).Clear()
 	c.JSON(http.StatusOK, ChatClearResponse{Code: 0, Msg: "ok", Data: ChatClearData(r)})
+}
+
+// handleChatList 返回当前用户的会话 ID 列表
+// @Summary 会话列表
+// @Tags Chat
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} APIResponse
+// @Failure 401 {object} UnauthorizedError
+// @Router /api/chat/list [get]
+func handleChatList(c *gin.Context) {
+	uidVal, _ := c.Get(auth.CtxUserIDKey)
+	uid, _ := uidVal.(uint)
+	type convRow struct {
+		ID           string    `json:"id"`
+		LastActiveAt time.Time `json:"last_active_at"`
+	}
+	var rows []convRow
+	if err := db.Global.Model(&models.Conversation{}).
+		Select("id, last_active_at").
+		Where("user_id = ?", uid).
+		Order("last_active_at desc").
+		Find(&rows).Error; err != nil {
+		writeErr(c, http.StatusInternalServerError, CodeInternalError, "查询失败")
+		return
+	}
+	c.JSON(http.StatusOK, APIResponse{Code: 0, Msg: "ok", Data: gin.H{"conversations": rows, "count": len(rows)}})
 }
 
 // 工具: 将内存消息转为模型消息
