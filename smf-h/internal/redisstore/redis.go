@@ -100,3 +100,12 @@ func DeleteRecentMessages(ctx context.Context, conversationID string) {
 	key := KeyConversationRecent + conversationID
 	_ = Client.Del(ctx, key).Err()
 }
+
+// DeleteConversationAll 删除一个会话相关的所有缓存键（目前 summary + recent）
+func DeleteConversationAll(ctx context.Context, conversationID string) {
+	if !available || Client == nil || conversationID == "" {
+		return
+	}
+	keys := []string{KeyConversationRecent + conversationID, KeyConversationSummary + conversationID}
+	_ = Client.Del(ctx, keys...).Err()
+}

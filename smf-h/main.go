@@ -101,6 +101,8 @@ type ChatHistoryResponse struct {
 
 type ChatClearData struct {
 	ConversationID string `json:"conversation_id"`
+	Deleted        bool   `json:"deleted"`
+	Full           bool   `json:"full"`
 }
 type ChatClearResponse struct {
 	Code int           `json:"code" example:"0"`
@@ -253,6 +255,8 @@ func main() {
 		chatGroup.GET("/history", handleChatHistory)
 		chatGroup.POST("/clear", handleChatClear)
 		chatGroup.GET("/list", handleChatList)
+		// 调试缓存接口（需在环境变量 DEBUG_CACHE=1 下调用）
+		chatGroup.GET("/debug/cache", handleChatDebugCache)
 	}
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
@@ -373,6 +377,9 @@ func handleChatSend(c *gin.Context) {
 		recent := cm.LastN(maxHistoryToUse * 2)
 		if b, err := json.Marshal(recent); err == nil {
 			redisstore.CacheRecentMessages(c.Request.Context(), req.ConversationID, string(b), 10*time.Minute)
+			if os.Getenv("DEBUG_CACHE") == "1" {
+				fmt.Printf("[DEBUG_CACHE] set recent cache conv=%s size=%d\n", req.ConversationID, len(recent))
+			}
 		}
 	}
 
@@ -506,6 +513,7 @@ func handleChatHistory(c *gin.Context) {
 func handleChatClear(c *gin.Context) {
 	type clearReq struct {
 		ConversationID string `json:"conversation_id"`
+		Full           bool   `json:"full"` // 为 true 时连同会话记录一起删除
 	}
 	var r clearReq
 	if err := c.ShouldBindJSON(&r); err != nil || r.ConversationID == "" {
@@ -526,11 +534,38 @@ func handleChatClear(c *gin.Context) {
 		writeErr(c, http.StatusInternalServerError, CodeInternalError, "清空失败")
 		return
 	}
+	deletedConv := false
+	if r.Full { // 连同会话元数据删除
+		if err := db.Global.Delete(&models.Conversation{}, "id = ?", r.ConversationID).Error; err == nil {
+			deletedConv = true
+		}
+	}
 	// 清内存
 	mgr.Get(r.ConversationID).Clear()
-	// 删除 Redis 最近历史缓存
-	redisstore.DeleteRecentMessages(c.Request.Context(), r.ConversationID)
-	c.JSON(http.StatusOK, ChatClearResponse{Code: 0, Msg: "ok", Data: ChatClearData(r)})
+	if r.Full {
+		mgr.Delete(r.ConversationID)
+	}
+	// 删除 Redis 缓存（recent + summary）
+	redisstore.DeleteConversationAll(c.Request.Context(), r.ConversationID)
+	if os.Getenv("DEBUG_CACHE") == "1" {
+		fmt.Printf("[DEBUG_CACHE] delete cache conv=%s full=%v\n", r.ConversationID, r.Full)
+	}
+	c.JSON(http.StatusOK, ChatClearResponse{Code: 0, Msg: "ok", Data: ChatClearData{ConversationID: r.ConversationID, Deleted: deletedConv, Full: r.Full}})
+}
+
+// 调试查看缓存（只在 DEBUG_CACHE=1 时启用）
+func handleChatDebugCache(c *gin.Context) {
+	if os.Getenv("DEBUG_CACHE") != "1" {
+		c.JSON(http.StatusForbidden, APIError{Code: CodeForbiddenModel, Msg: "not enabled"})
+		return
+	}
+	convID := c.Query("conversation_id")
+	if convID == "" {
+		writeErr(c, http.StatusBadRequest, CodeBadParam, "conversation_id 必填")
+		return
+	}
+	cached, _ := redisstore.GetRecentMessages(c.Request.Context(), convID)
+	c.JSON(http.StatusOK, APIResponse{Code: 0, Msg: "ok", Data: gin.H{"conversation_id": convID, "cached_recent": cached, "length": len(cached)}})
 }
 
 // handleChatList 返回当前用户的会话 ID 列表
