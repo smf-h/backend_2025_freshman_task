@@ -334,8 +334,13 @@ func handleChatSend(c *gin.Context) {
 	uid, _ := uidVal.(uint)
 	_ = db.Global.Create(&models.Message{ConversationID: req.ConversationID, UserID: uid, Role: "user", Content: req.Question, TokenCount: userTokenCount}).Error
 
-	// 准备历史（最近 N 条）
-	history := cm.LastN(maxHistoryToUse)
+	// 准备历史：之前只取 maxHistoryToUse，容易导致上下文太短；
+	// 为了让模型看到更多往返，这里扩大到 *2（与缓存策略一致）。
+	contextWindow := maxHistoryToUse * 2
+	if contextWindow <= 0 {
+		contextWindow = maxHistoryToUse
+	}
+	history := cm.LastN(contextWindow)
 	modelMsgs := convertToModelMessages(history)
 
 	var answer string
