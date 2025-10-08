@@ -528,6 +528,8 @@ func handleChatClear(c *gin.Context) {
 	}
 	// 清内存
 	mgr.Get(r.ConversationID).Clear()
+	// 删除 Redis 最近历史缓存
+	redisstore.DeleteRecentMessages(c.Request.Context(), r.ConversationID)
 	c.JSON(http.StatusOK, ChatClearResponse{Code: 0, Msg: "ok", Data: ChatClearData(r)})
 }
 

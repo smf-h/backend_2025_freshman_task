@@ -91,3 +91,12 @@ func GetRecentMessages(ctx context.Context, conversationID string) (string, erro
 	}
 	return val, err
 }
+
+// DeleteRecentMessages 删除会话的最近消息缓存
+func DeleteRecentMessages(ctx context.Context, conversationID string) {
+	if !available || Client == nil || conversationID == "" {
+		return
+	}
+	key := KeyConversationRecent + conversationID
+	_ = Client.Del(ctx, key).Err()
+}
