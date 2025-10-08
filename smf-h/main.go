@@ -103,6 +103,7 @@ type ChatClearData struct {
 	ConversationID string `json:"conversation_id"`
 	Deleted        bool   `json:"deleted"`
 	Full           bool   `json:"full"`
+	MessageDeleted int64  `json:"message_deleted" example:"4"` // 实际删除的消息条数
 }
 type ChatClearResponse struct {
 	Code int           `json:"code" example:"0"`
@@ -529,8 +530,9 @@ func handleChatClear(c *gin.Context) {
 			return
 		}
 	}
-	// 删除数据库消息
-	if err := db.Global.Where("conversation_id = ?", r.ConversationID).Delete(&models.Message{}).Error; err != nil {
+	// 删除数据库消息并统计条数
+	var delResult = db.Global.Where("conversation_id = ?", r.ConversationID).Delete(&models.Message{})
+	if delResult.Error != nil {
 		writeErr(c, http.StatusInternalServerError, CodeInternalError, "清空失败")
 		return
 	}
@@ -548,9 +550,9 @@ func handleChatClear(c *gin.Context) {
 	// 删除 Redis 缓存（recent + summary）
 	redisstore.DeleteConversationAll(c.Request.Context(), r.ConversationID)
 	if os.Getenv("DEBUG_CACHE") == "1" {
-		fmt.Printf("[DEBUG_CACHE] delete cache conv=%s full=%v\n", r.ConversationID, r.Full)
+		fmt.Printf("[DEBUG_CACHE] delete cache conv=%s full=%v msg_deleted=%d redis_available=%v\n", r.ConversationID, r.Full, delResult.RowsAffected, redisstore.IsAvailable())
 	}
-	c.JSON(http.StatusOK, ChatClearResponse{Code: 0, Msg: "ok", Data: ChatClearData{ConversationID: r.ConversationID, Deleted: deletedConv, Full: r.Full}})
+	c.JSON(http.StatusOK, ChatClearResponse{Code: 0, Msg: "ok", Data: ChatClearData{ConversationID: r.ConversationID, Deleted: deletedConv, Full: r.Full, MessageDeleted: delResult.RowsAffected}})
 }
 
 // 调试查看缓存（只在 DEBUG_CACHE=1 时启用）
