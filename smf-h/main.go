@@ -104,6 +104,7 @@ type ChatClearData struct {
 	Deleted        bool   `json:"deleted"`
 	Full           bool   `json:"full"`
 	MessageDeleted int64  `json:"message_deleted" example:"4"` // 实际删除的消息条数
+	ConversationDeleted int64 `json:"conversation_deleted,omitempty" example:"1"` // full 模式删除的会话条数 (0 或 1)
 }
 type ChatClearResponse struct {
 	Code int           `json:"code" example:"0"`
@@ -537,9 +538,12 @@ func handleChatClear(c *gin.Context) {
 		return
 	}
 	deletedConv := false
+	var convDelRows int64
 	if r.Full { // 连同会话元数据删除
-		if err := db.Global.Delete(&models.Conversation{}, "id = ?", r.ConversationID).Error; err == nil {
+		res := db.Global.Delete(&models.Conversation{}, "id = ?", r.ConversationID)
+		if res.Error == nil && res.RowsAffected > 0 {
 			deletedConv = true
+			convDelRows = res.RowsAffected
 		}
 	}
 	// 清内存
@@ -552,7 +556,7 @@ func handleChatClear(c *gin.Context) {
 	if os.Getenv("DEBUG_CACHE") == "1" {
 		fmt.Printf("[DEBUG_CACHE] delete cache conv=%s full=%v msg_deleted=%d redis_available=%v\n", r.ConversationID, r.Full, delResult.RowsAffected, redisstore.IsAvailable())
 	}
-	c.JSON(http.StatusOK, ChatClearResponse{Code: 0, Msg: "ok", Data: ChatClearData{ConversationID: r.ConversationID, Deleted: deletedConv, Full: r.Full, MessageDeleted: delResult.RowsAffected}})
+	c.JSON(http.StatusOK, ChatClearResponse{Code: 0, Msg: "ok", Data: ChatClearData{ConversationID: r.ConversationID, Deleted: deletedConv, Full: r.Full, MessageDeleted: delResult.RowsAffected, ConversationDeleted: convDelRows}})
 }
 
 // 调试查看缓存（只在 DEBUG_CACHE=1 时启用）

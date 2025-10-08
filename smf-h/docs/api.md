@@ -113,7 +113,8 @@ POST /api/chat/clear (需登录)
     "conversation_id":"xxx",
     "deleted": false,   // full=true 且会话记录删除后为 true
     "full": false,
-    "message_deleted": 4  // 本次实际删除的消息条数（新增字段，便于确认是否命中）
+    "message_deleted": 4,  // 本次实际删除的消息条数
+    "conversation_deleted": 1 // full=true 且会话记录删除后=1，否则缺省或=0
   }
 }
 ```
