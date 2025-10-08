@@ -12,7 +12,7 @@
 - 统一错误码与结构化响应
 - Swagger 文档生成
 
-运行方式（需 Go 1.24+）：
+运行方式（需 Go 1.24+，未设置 ARK_API_KEY 时进入 mock 回复模式）：
 ```powershell
 # (可选) 设置模型 API Key
 $env:ARK_API_KEY = "<your-api-key>"
@@ -33,7 +33,7 @@ http://localhost:8080/swagger/index.html
 │   ├── auth/                # 认证与权限：JWT、密码、middleware
 │   ├── config/              # 配置加载解析 (YAML -> struct)
 │   ├── db/                  # GORM 初始化与全局句柄
-│   ├── memory/              # 内存会话管理器 (MemoryManager)
+│   ├── memory/              # 内存会话管理器 (MemoryManager) + 上下文窗口截断
 │   └── models/              # 数据表模型 (User / Conversation / Message)
 └── docs/
     ├── api.md               # 手写接口说明
@@ -91,7 +91,7 @@ models:
 
 注意：
 - `conversation_id` 为外部可见 ID（UUID）。
-- 历史消息内存缓存只保留最近若干条，数据库持久化全量，用于历史回放。
+- 历史消息内存缓存只保留最近若干条；数据库持久化全量，用于历史回放与重启后的回灌（warm）。
 
 ---
 ## 5. 认证与权限 (auth)
@@ -110,9 +110,11 @@ JWT 声明包含：用户 ID、用户名、过期时间；HS256 签名，密钥�
 - `ConversationMemory`：`[]Message`（环或截断策略）
 
 策略：
-- 每次追加消息时估算 token（`roughTokenEstimate` 基于分词近似 *1.3 乘子）。
-- 获取模型输入时使用 `LastN(maxHistoryToUse)` 控制上下文长度。
-- 如果进程重启，内存上下文清空，但前端可通过 `/history` 重新灌入（当前实现为首次访问历史时只向空内存填充）。
+- 每次追加消息时估算 token（`roughTokenEstimate` 简单近似）。
+- 获取模型输入时使用 `LastN(maxHistoryToUse * 2)` （扩大窗口，提升连续性）。
+- /send 首次使用某会话且内存为空：先 warm（Redis recent -> DB 全量），然后再 append 新消息，确保重启后首轮仍有上下文。
+- 内存超出 `memory_limit_msgs` 时 FIFO 丢最旧。
+- `/clear` full=true 时会彻底从内存管理器移除该会话。
 
 ---
 ## 7. Handler 关键流程
@@ -122,8 +124,9 @@ JWT 声明包含：用户 ID、用户名、过期时间；HS256 签名，密钥�
   -> (可生成 conversation_id & DB 创建会话)
   -> 会话归属校验 (conversation.user_id == token.user_id)
   -> 模型存在 & 权限等级校验
+  -> Warm (若内存空：Redis recent 缓存，否则 DB 回源) 
   -> 内存追加用户消息 + DB 保存
-  -> 截取最近 N 条历史 => 调用模型 SDK
+  -> 截取最近 2*N 条历史 => 调用模型 SDK
   -> 校验返回结构 (choices / content)
   -> 追加助手消息 (内存 + DB)
   -> 返回 answer / used_history
@@ -138,13 +141,24 @@ JWT 声明包含：用户 ID、用户名、过期时间；HS256 签名，密钥�
   -> 返回 messages 列表
 ```
 
-### 7.3 清空会话 `/api/chat/clear`
+### 7.3 清空/删除会话 `/api/chat/clear`
 ```
-[Bind conversation_id]
+[Bind conversation_id, full]
   -> 归属校验
   -> DB 删除该会话所有 messages
-  -> 内存 Clear()
-  -> 返回成功
+  -> full=true 额外删除 conversations 记录
+  -> 内存 Clear(); full=true 时 mgr.Delete()
+  -> 删除 Redis recent/summary 缓存
+  -> 返回 {deleted, full}
+
+### 7.4 会话列表 `/api/chat/list`
+```
+GET -> user_id 过滤 conversations 按 last_active_at desc
+返回 [{id,last_active_at}]
+```
+
+### 7.5 调试缓存 `/api/chat/debug/cache`
+仅在 DEBUG_CACHE=1 时可用；读取 Redis recent 原始 JSON。
 ```
 
 ### 7.4 注册 / 登录
@@ -176,6 +190,8 @@ Swagger 通过不同结构体名（`BadRequestError` 等）让前端区分分支
 - 调用：`client.CreateChatCompletion(ctx, model.CreateChatCompletionRequest{Model: req.Model, Messages: modelMsgs})`
 - 将内存消息转换为 SDK 消息：`convertToModelMessages`。
 
+Mock 模式：未设置 ARK_API_KEY 时跳过真实请求，直接返回 `[mock:model] 你说: ...`，用于离线开发。
+
 扩展其他模型：可封装接口 `ModelProvider`，当前代码为内联调用，可后续抽象：
 ```
 type ModelProvider interface { Chat(messages []ChatMessage) (answer string, err error) }
@@ -202,9 +218,8 @@ models:
 ```
 2. 重启服务 -> `modelLevelMap` 自动加载。
 
-### 11.2 新增会话列表接口
-- 模型：直接查询 `conversations` where `user_id = ?` order by `last_active_at desc` limit N。
-- 返回最近会话基本信息（id, last_active_at, message_count）。
+### 11.2 会话列表接口现已实现
+- 查询 `conversations` where user_id = ? order by last_active_at desc；当前无分页。
 
 ### 11.3 添加流式输出 (SSE)
 - 新路由：`/api/chat/send/stream`
@@ -261,7 +276,9 @@ router.ServeHTTP(w, req)
 |------|------|------|
 | Swagger `/swagger/doc.json` 500 | 缺少空白导入或重复 `docs.go` | 保留 `_ ".../docs/swagger"` 且清理重复生成 | 
 | 模型权限未生效 | 配置未加载/模型ID拼写 | 检查 `models` 配置与日志 | 
-| 历史上下文丢失 | 进程重启内存清空 | 通过 `/history` 首次加载再继续聊天 |
+| 历史上下文丢失 | 进程重启内存清空 | 首次 /send 会 warm：Redis -> DB；或手动调用 /history |
+| 清空后 Redis 仍有缓存 | 旧逻辑未删缓存 | 已在 /clear 中调用 DeleteConversationAll |
+| 会话删除后仍在列表 | 使用 full=false 仅清消息 | 需要彻底删除传 full=true |
 | Token 过期过快 | access_ttl 配置单位为纳秒 | 确认 YAML 数值是否过小 |
 
 ---
@@ -277,7 +294,8 @@ router.ServeHTTP(w, req)
 | 事项 | 位置 | 说明 |
 |------|------|------|
 | 添加新错误码 | `main.go` 常量区 | 同步 `api.md` & `code_overview.md` |
-| 新增 Handler | `main.go` | 增加 Swagger 注释 + 使用 `writeErr` |
+| 新增 Handler | `main.go` | 增加 Swagger 注释 + 使用 `writeErr` + 视需要更新缓存逻辑 |
+| 清空/删除会话 | `/api/chat/clear` | 选择 full=true 彻底删除（含缓存） |
 | 新增模型策略 | `config.yaml` | 重启即可生效 |
 | 数据库字段变更 | `models/` | 执行 AutoMigrate (开发) / 正式使用迁移工具 |
 | Token 问题调试 | `internal/auth` | 检查 TTL / Secret | 

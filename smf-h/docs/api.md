@@ -97,17 +97,81 @@ GET /api/chat/history?conversation_id=xxx (需登录)
 }
 ```
 
-### 清空会话
-POST /api/chat/clear
+### 清空 / 删除会话
+POST /api/chat/clear (需登录)
 ```
-{ "conversation_id": "xxx" }
+{
+  "conversation_id": "xxx",
+  "full": false   // 可选，true=连同会话元数据彻底删除
+}
 ```
-返回: `{ "code":0 }`
+响应示例：
+```
+{
+  "code":0,
+  "data": {
+    "conversation_id":"xxx",
+    "deleted": false,   // full=true 且会话记录删除后为 true
+    "full": false
+  }
+}
+```
+行为说明：
+| full | 动作 |
+|------|------|
+| false | 删除该会话全部消息，保留 conversations 记录 (可继续追加历史) |
+| true  | 删除消息 + 会话记录 + 内存条目 + Redis 缓存键 |
+
+Redis 缓存键：`chat:conv:recent:<id>` 会被同时删除。
+
+### 会话列表
+GET /api/chat/list (需登录)
+```
+返回:
+{
+  "code":0,
+  "data": {
+    "conversations": [
+       {"id":"c1","last_active_at":"2025-10-08T10:11:12Z"},
+       {"id":"c2","last_active_at":"2025-10-07T09:01:00Z"}
+    ],
+    "count": 2
+  }
+}
+```
+当前未分页，可后续加 `?limit=&offset=`。
+
+### 调试查看缓存 (仅 DEBUG 用)
+GET /api/chat/debug/cache?conversation_id=xxx (需登录 & 环境变量 `DEBUG_CACHE=1` 才启用)
+```
+返回:
+{
+  "code":0,
+  "data":{
+    "conversation_id":"xxx",
+    "cached_recent":"[ {..}, ... ]",
+    "length": 456   // JSON 原始字符串长度
+  }
+}
+```
+若未开启返回 403。
 
 ## 计划中 (Planned)
-- GET /api/chat/list  列出当前用户最近会话
-- DELETE /api/chat/delete  删除会话及消息
-- POST /api/chat/send/stream  SSE 流式
+- POST /api/chat/send/stream  SSE 流式输出
+- 分页的会话列表 (limit / offset)
+- 会话摘要 (summary) 与多级上下文压缩
+- Token 精确统计（替换粗略 roughTokenEstimate）
+
+## 会话上下文与缓存
+当前 /send 在内部会：
+1. 若内存中该会话为空 -> 先 warm：尝试 Redis 最近消息缓存 -> 不命中则 DB 拉取全部（随后内存 FIFO 剪裁）。
+2. 取最近 `2 * max_history` 条消息作为上下文（扩大窗口以提高回答连续性）。
+3. 写入用户消息、调用模型、写入助手消息。
+4. 将最近 `max_history*2` 消息写入 Redis (`chat:conv:recent:<id>` TTL 10m)。
+
+清空 `/clear`：
+- full=false 删除 messages + 内存数组 + 缓存 recent
+- full=true 还会删除 conversations 记录，并从内存管理器移除整个会话
 
 ## Swagger 使用
 安装 swag CLI 本地生成:
