@@ -158,10 +158,20 @@ func writeErr(c *gin.Context, httpStatus, code int, msg string) {
 }
 
 func main() {
-	// 1. 加载配置
+	// 1. 加载配置（允许没有文件时使用硬编码默认配置，方便本地快速运行不提交真实配置）
 	cfg, err := config.Load("config/config.yaml")
 	if err != nil {
-		panic("加载配置失败: " + err.Error())
+		fmt.Println("[WARN] 未找到或解析配置文件，将使用内置开发默认配置:", err)
+		cfg = config.Root{
+			Server: config.ServerConfig{Port: 8080, Mode: "debug"},
+			MySQL:  config.MySQLConfig{Host: "127.0.0.1", Port: 3306, User: "root", Password: "", Database: "ai_chat", Charset: "utf8mb4"},
+			Chat:   config.ChatConfig{DefaultModel: "doubao-seed-1-6-250615", MaxHistory: 12, MemoryLimitMsgs: 200, RequestTimeout: 15 * time.Second},
+			Auth:   config.AuthConfig{JWTSecret: "dev_local_jwt_secret", AccessTTL: 24 * time.Hour},
+			Models: []config.ModelPolicy{{ID: "doubao-seed-1-6-250615", MinLevel: 1}, {ID: "deepseek-v3-1-terminus", MinLevel: 3}},
+			Redis:  config.RedisConfig{Host: "127.0.0.1", Port: 6379, DB: 0, PoolSize: 20, DialTimeout: 2 * time.Second, ReadTimeout: 1 * time.Second, WriteTimeout: 1 * time.Second},
+		}
+		// 仍允许环境变量覆盖
+		config.ApplyEnvOverrides(&cfg)
 	}
 	appConfig = cfg
 
@@ -185,9 +195,10 @@ func main() {
 	// 3. AI 客户端（API KEY 依旧使用环境变量）
 	apiKey := os.Getenv("ARK_API_KEY")
 	if apiKey == "" {
-		panic("请设置环境变量 ARK_API_KEY")
+		fmt.Println("[WARN] 未设置 ARK_API_KEY，将使用 mock 模型回答 (本地开发模式)。设置 ARK_API_KEY 可启用真实模型调用。")
+	} else {
+		client = arkruntime.NewClientWithApiKey(apiKey, arkruntime.WithBaseUrl("https://ark.cn-beijing.volces.com/api/v3"))
 	}
-	client = arkruntime.NewClientWithApiKey(apiKey, arkruntime.WithBaseUrl("https://ark.cn-beijing.volces.com/api/v3"))
 
 	// 3.1 设置 JWT 密钥
 	auth.SetJWTSecret(cfg.Auth.JWTSecret)
@@ -323,20 +334,25 @@ func handleChatSend(c *gin.Context) {
 	history := cm.LastN(maxHistoryToUse)
 	modelMsgs := convertToModelMessages(history)
 
-	resp, err := client.CreateChatCompletion(c.Request.Context(), model.CreateChatCompletionRequest{
-		Model:    req.Model,
-		Messages: modelMsgs,
-	})
-	if err != nil {
-		writeErr(c, http.StatusInternalServerError, CodeInternalError, "模型调用失败")
-		return
+	var answer string
+	if client == nil { // mock 模式
+		answer = fmt.Sprintf("[mock:%s] 你说: %s", req.Model, req.Question)
+	} else {
+		resp, err := client.CreateChatCompletion(c.Request.Context(), model.CreateChatCompletionRequest{
+			Model:    req.Model,
+			Messages: modelMsgs,
+		})
+		if err != nil {
+			writeErr(c, http.StatusInternalServerError, CodeInternalError, "模型调用失败")
+			return
+		}
+		// 根据 SDK 结构：如果 Message 不是指针则无需判空；只校验 Choices 与 Content 指针
+		if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == nil || resp.Choices[0].Message.Content.StringValue == nil {
+			writeErr(c, http.StatusInternalServerError, CodeModelEmpty, "模型返回为空")
+			return
+		}
+		answer = *resp.Choices[0].Message.Content.StringValue
 	}
-	// 根据 SDK 结构：如果 Message 不是指针则无需判空；只校验 Choices 与 Content 指针
-	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == nil || resp.Choices[0].Message.Content.StringValue == nil {
-		writeErr(c, http.StatusInternalServerError, CodeModelEmpty, "模型返回为空")
-		return
-	}
-	answer := *resp.Choices[0].Message.Content.StringValue
 	ansToken := roughTokenEstimate(answer)
 	cm.Append(memory.Message{Role: "assistant", Content: answer, TokenCount: ansToken})
 	// 持久化助手回复
